@@ -38,7 +38,7 @@ export function LoginForm({
           </Field>
           <Field>
             <FieldLabel htmlFor="password">Password</FieldLabel>
-            <Input id="password" type="password" placeholder="password" required />
+            <Input id="password" type="password" placeholder="password" onChange={handlePasswordChange} required />
           </Field>
           <Field>
             <Button type="submit">Login</Button>

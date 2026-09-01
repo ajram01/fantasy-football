@@ -1,10 +1,10 @@
 import {LoginForm} from './components/login-form.jsx';
 import { createClient } from '@supabase/supabase-js'
 import { useState } from 'react'
-import { redirect } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
-const supabaseUrl = import.meta.env.SUPABASE_URL;
-const supabasePublicKey = import.meta.env.SUPABASE_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabasePublicKey = import.meta.env.VITE_SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabasePublicKey);
 
 
@@ -12,6 +12,9 @@ export function Login() {
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [error, setError] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const naviagate = useNavigate();
 
     function handleEmailChange(e){
         setEmail(e.target.value);
@@ -27,15 +30,14 @@ export function Login() {
                 email: email,
                 password: password
             });
-            if (data.user){
-                redirect()
-            }
+        } catch(err){
+
         }
     }
 
     return(
         <>
-            <LoginForm email={email} password={password} handleEmailChange={handleEmailChange}/>
+            <LoginForm email={email} password={password} handleEmailChange={handleEmailChange} handlePasswordChange={handlePasswordChange} onSubmit={signIn}/>
         </>
-    )
+    );
 }
