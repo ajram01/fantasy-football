@@ -1,11 +1,7 @@
 import {LoginForm} from './components/login-form.jsx';
-import { createClient } from '@supabase/supabase-js'
-import { useState } from 'react'
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabasePublicKey = import.meta.env.VITE_SUPABASE_KEY;
-const supabase = createClient(supabaseUrl, supabasePublicKey);
+import { supabase } from "@/lib/supabaseClient.js";
 
 
 export function Login() {
@@ -14,7 +10,7 @@ export function Login() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
-    const naviagate = useNavigate();
+    const navigate = useNavigate();
 
     function handleEmailChange(e){
         setEmail(e.target.value);
@@ -24,20 +20,42 @@ export function Login() {
         setPassword(e.target.value);
     }
 
-    async function signIn(email, password){
+    async function signIn(e){
+        e.preventDefault();
+        setLoading(true);
+        setError(null);
+
         try {
-            const { data, error } = await supabase.auth.signInWithPassword({
+            const { error } = await supabase.auth.signInWithPassword({
                 email: email,
                 password: password
             });
-        } catch(err){
 
+            setLoading(false);
+
+        } catch(error){
+            setError(error.message)
+            setLoading(false);
+            return;
         }
+
+        setLoading(false);
+        navigate('/App');
     }
 
     return(
-        <>
-            <LoginForm email={email} password={password} handleEmailChange={handleEmailChange} handlePasswordChange={handlePasswordChange} onSubmit={signIn}/>
-        </>
+        <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
+            <div className="w-full max-w-sm">
+                <LoginForm
+                    email={email}
+                    password={password}
+                    handleEmailChange={handleEmailChange}
+                    handlePasswordChange={handlePasswordChange}
+                    onSubmit={signIn}
+                    error={error}
+                    loading={loading}
+                />
+            </div>
+        </div>
     );
 }

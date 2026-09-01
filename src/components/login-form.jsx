@@ -11,37 +11,45 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { GalleryVerticalEndIcon } from "lucide-react"
+import { Trophy } from 'lucide-react';
 
 export function LoginForm({
-  className,
+   className,
+    email,
+    password,
+    handleEmailChange,
+    handlePasswordChange,
+    onSubmit,
+    error,
+    loading,
   ...props
 }) {
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <form>
+      {error && (<p className="text-sm text-destructive text-center">{error}</p>)}
+      <form onSubmit={onSubmit}>
         <FieldGroup>
           <div className="flex flex-col items-center gap-2 text-center">
             <a href="#" className="flex flex-col items-center gap-2 font-medium">
               <div className="flex size-8 items-center justify-center rounded-md">
-                <GalleryVerticalEndIcon className="size-6" />
+                <div className="bg-[#d4af37] rounded-md p-1.5 shrink-0 mb-5">
+                  <Trophy size={30} color="#12141E" />
+                </div>
               </div>
               <span className="sr-only">Acme Inc.</span>
             </a>
-            <h1 className="text-xl font-bold">Welcome to Acme Inc.</h1>
-            <FieldDescription>
-              Don&apos;t have an account? <a href="#">Sign up</a>
-            </FieldDescription>
+            <h1 className="text-xl font-bold text-white">Welcome to the Draft Center</h1>
           </div>
           <Field>
-            <FieldLabel htmlFor="email">Email</FieldLabel>
-            <Input id="email" type="email" placeholder="m@example.com" onChange={handleEmailChange} required />
+            <FieldLabel htmlFor="email" className="text-white" >Email</FieldLabel>
+            <Input id="email" type="email" placeholder="m@example.com" value={email} onChange={handleEmailChange} required />
           </Field>
           <Field>
-            <FieldLabel htmlFor="password">Password</FieldLabel>
-            <Input id="password" type="password" placeholder="password" onChange={handlePasswordChange} required />
+            <FieldLabel htmlFor="password" className="text-white" >Password</FieldLabel>
+            <Input id="password" type="password" placeholder="password" value={password} onChange={handlePasswordChange} required />
           </Field>
           <Field>
-            <Button type="submit">Login</Button>
+            <Button type="submit" disabled={loading}>{loading ? 'Logging in...' : 'Login'}</Button>
           </Field>
           <FieldSeparator>Or</FieldSeparator>
           <Field className="grid gap-4 sm:grid-cols-2">
