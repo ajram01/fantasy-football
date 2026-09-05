@@ -26,10 +26,11 @@ export function Login() {
         setError(null);
 
         try {
-            const { error } = await supabase.auth.signInWithPassword({
+            const { error, data } = await supabase.auth.signInWithPassword({
                 email: email,
                 password: password
             });
+
 
             setLoading(false);
 
@@ -40,7 +41,7 @@ export function Login() {
         }
 
         setLoading(false);
-        navigate('/App');
+        navigate('/app');
     }
 
     return(
