@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Settings, Search, RotateCcw, Check, X, Undo2, Trophy, Users,
   ChevronRight, Flame, Shield, Clock, ListChecks, LayoutGrid,
-  RefreshCw, AlertTriangle, AlertCircle, ThumbsUp, Info
+  RefreshCw, AlertTriangle, AlertCircle, ThumbsUp, Info, Plus
 } from 'lucide-react';
+import { supabase } from './lib/supabaseClient';
 
 /* ------------------------------------------------------------------ */
 /*  Design tokens                                                      */
@@ -38,6 +39,12 @@ const Tokens = () => (
     @media (prefers-reduced-motion: reduce) { .ff-transition { transition: none !important; } }
     .ff-spin { animation: ff-spin-kf 1s linear infinite; }
     @keyframes ff-spin-kf { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .ff-toggle { position: relative; display: inline-block; width: 36px; height: 20px; }
+    .ff-toggle input { opacity: 0; width: 0; height: 0; }
+    .ff-toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #333850; border-radius: 20px; transition: .2s; }
+    .ff-toggle-slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .2s; }
+    .ff-toggle input:checked + .ff-toggle-slider { background: #E8B339; }
+    .ff-toggle input:checked + .ff-toggle-slider:before { transform: translateX(16px); }
   `}</style>
 );
 
@@ -55,191 +62,200 @@ const POS_META = {
 const FLEX_ELIGIBLE = ['RB', 'WR', 'TE'];
 
 /* ------------------------------------------------------------------ */
-/*  Player database — compiled from current ADP/consensus rankings,   */
-/*  offseason trade & free agency coverage, and August training-camp  */
-/*  injury reports. Treat as a living cheat sheet: prices, injury      */
-/*  designations and depth-chart battles move daily, so double check  */
-/*  anyone you're on the fence about the morning of your draft.       */
+/*  Static player notes — fallback lookup when DB has no live update  */
+/*  Keyed by the canonical DB full_name where known to differ.        */
 /* ------------------------------------------------------------------ */
-let _id = 0;
-const P = (name, pos, team, note) => ({ id: ++_id, name, pos, team, rank: _id, note: note || '' });
+const PLAYER_NOTES = {
+  'Bijan Robinson': 'Led the NFL in scrimmage yards last season (2,298)',
+  'Jahmyr Gibbs': '1,223 rush yds/13 TD + 117 catches; Montgomery traded away, clear bell cow',
+  "Ja'Marr Chase": 'Top-5 WR in points/game in 4 of the last 5 seasons',
+  'Justin Jefferson': 'Dominant with every QB except last year; buy-low with Kyler Murray now throwing',
+  'Puka Nacua': "Last year's WR1; offseason rehab-facility stay adds risk in his contract year",
+  'Amon-Ra St. Brown': 'Top-3 WR three straight seasons',
+  'CeeDee Lamb': 'Injury-shortened last year; now shares Dallas targets with George Pickens',
+  'Malik Nabers': 'On a 2-for-2 top-12 pace before a Week 4 ACL tear; trending to go Week 1',
+  'Brian Thomas Jr.': 'Big-play alpha in a Jaguars offense that won the AFC South',
+  'Saquon Barkley': 'Historic 2024 gave way to regression last year; some are fading him at cost',
+  "De'Von Achane": "Led the NFL in yards/touch; new run-first scheme without Tua/McDaniel adds risk",
+  'Christian McCaffrey': 'No.1 overall fantasy scorer last year at age 30 — huge ceiling, real injury history',
+  'Nico Collins': "Clear WR1 after teammate Jayden Higgins' season-ending ACL tear",
+  'Drake London': "Atlanta's clear No.1 target regardless of who wins the QB battle",
+  'A.J. Brown': 'Traded to New England to pair with Drake Maye; six 1,000-yd seasons in seven years',
+  'Trey McBride': 'Wore the fantasy TE1 crown last season',
+  'Brock Bowers': 'Best offensive context of his career entering this year',
+  'Jaxon Smith-Njigba': 'WR2 in total scoring last year; some regression risk after the breakout',
+  'Derrick Henry': 'Still defying the age curve',
+  'Josh Allen': 'QB1 in four of the last six years; 14 rushing TDs last season',
+  'Josh Jacobs': 'Steady RB1 in Green Bay, though an ongoing legal matter is worth monitoring',
+  'Jonathan Taylor': 'Some models project fewer TDs after a huge 2025',
+  'Kyren Williams': 'Top-10 points/game at the position three straight years',
+  'James Cook III': 'Led the NFL in rushing yards last season (1,621)',
+  'James Cook': 'Led the NFL in rushing yards last season (1,621)',
+  'DeVonta Smith': "Philly's clear WR1 now that A.J. Brown is gone",
+  'George Pickens': "Now sharing Dallas' passing game with Lamb",
+  'Rashee Rice': 'Less off-field uncertainty than a year ago, but missed minicamp on a legal matter',
+  'Marvin Harrison Jr.': 'Talent is obvious; offense still finding its footing',
+  'Kenneth Walker III': 'Big free-agent add in Kansas City; early timeshare while Mahomes ramps back from knee surgery',
+  'Ken Walker III': 'Big free-agent add in Kansas City; early timeshare while Mahomes ramps back from knee surgery',
+  'Breece Hall': 'Talented three-down profile in a run-first-leaning offense',
+  'Chase Brown': 'Efficient three-down back; O-line and backfield competition are the concerns',
+  'Colston Loveland': 'No.2 scoring TE from Week 9 on as a rookie, capped by an explosive playoff run',
+  'Tyler Warren': '76/817/4 as a rookie; Pittman traded away, even more targets up for grabs',
+  'Javonte Williams': 'Returned RB1 value last year and Dallas paid to keep him',
+  'Lamar Jackson': 'Down year in 2025 (13 games); new playcaller, buy-low rebound candidate',
+  'Tucker Kraft': 'Was playing like the TE1 before a Week 9 ACL/meniscus tear; trending toward Week 1',
+  'Sam LaPorta': 'Coming off offseason back surgery for a herniated disc',
+  'Jeremiyah Love': "No.3 overall pick in April's draft; high-ankle sprain in camp, hopeful for Wk1, but Allgeier/Conner cut into goal-line work",
+  'Mike Evans': 'Left Tampa Bay for San Francisco in free agency',
+  'Emeka Egbuka': "Clear path to Tampa's top target role with Evans gone; 68/938/6 as a rookie",
+  'Tyreek Hill': "Miami's rebuild (Waddle traded away) clouds an aging, still-explosive profile",
+  'Jaylen Waddle': 'Traded to Denver; boosts Bo Nix as much as himself',
+  'David Montgomery': 'Traded from Detroit; projected as a featured back in Houston',
+  'Alvin Kamara': 'Sprained MCL in camp, expected to miss about a month to start the season',
+  'Kyle Pitts': 'New extension, but Atlanta QB uncertainty caps the outlook',
+  'Drake Maye': 'QB3 finish last year; added A.J. Brown and Romeo Doubs this offseason',
+  'Bucky Irving': 'Electric rookie tape, but real red flags around his 2026 role',
+  'Jonathon Brooks': "Back from a second ACL tear in the same knee within 13 months; Carolina let Dowdle walk and passed on RB in the draft, sign of confidence",
+  'George Kittle': 'Still a reliable weekly floor',
+  'Travis Kelce': 'Some analysts are fading him purely on age and price',
+  'DK Metcalf': 'Field-stretching No.1 option',
+  'Zay Flowers': 'Lead slot role in a run-heavy Baltimore offense',
+  'Jordan Addison': "Vikings' No.2 behind Jefferson",
+  'Xavier Worthy': 'Field-stretcher in a crowded Chiefs passing game',
+  'Jameson Williams': 'Best season of his career last year (65/1,117/7); some call the efficiency a mirage',
+  'Chuba Hubbard': 'Hamstring strain in camp (week-to-week); Brooks pushing hard for touches behind him',
+  'Dak Prescott': 'Topped 4,500 passing yards last season on limited rushing',
+  'Kenny Gainwell': '13.3 touches/17.8 PPG from Week 8 on last year; standalone value with White gone from Tampa',
+  'Kenneth Gainwell': '13.3 touches/17.8 PPG from Week 8 on last year; standalone value with White gone from Tampa',
+  'Rico Dowdle': 'Reunited with his old head coach; splitting first-team camp reps with Warren',
+  'Jaylen Warren': "Splitting Pittsburgh's backfield reps with Dowdle",
+  'Jalen Hurts': 'Reliable rushing floor for a reigning Super Bowl roster',
+  'Joe Burrow': 'Elite ceiling in every game he finishes healthy',
+  'Jayden Daniels': 'Missed time last year (knee/hamstring/elbow) but was a playoff force when healthy',
+  'Rome Odunze': 'Part of a full receiver-room rebuild after the Moore trade',
+  'Ladd McConkey': 'Ascending slot weapon',
+  'Tetairoa McMillan': 'Led all rookie WRs last season (WR15 finish)',
+  'Christian Watson': 'High-upside boom piece, but has missed 20 games over four seasons',
+  'Isiah Pacheco': 'Now timesharing early-down work after the Walker signing',
+  "D'Andre Swift": "Bigger role possible if rookie Monangai's knee costs him time",
+  'Kyle Monangai': 'Hyperextended knee in camp; ADP already sliding, still worth a late-round dart',
+  'J.K. Dobbins': 'Re-signed; injury history, but a real path to lead work',
+  'Caleb Williams': 'Improving in Year 2; some call him overpriced next to Stafford/Purdy at similar cost',
+  'Patrick Mahomes': 'Recovering from a torn ACL/LCL — watch his Week 1 workload closely',
+  'Matthew Stafford': 'QB3 finish last year on almost zero rushing value',
+  'Kyler Murray': "New team via free agency after Arizona's release; big rushing/passing combo when healthy",
+  'Terry McLaurin': 'Down year last season per most models; catches from an improving Daniels',
+  'Stefon Diggs': 'Signed August 7 — ADP is still settling',
+  'Jayden Reed': 'Benefits from vacated Green Bay targets',
+  'Romeo Doubs': 'Signed to pair with A.J. Brown and Maye',
+  'Hollywood Brown': 'Signed as depth; WR2 upside if the target tree shakes out his way',
+  'DJ Moore': "Traded from Chicago to Buffalo; some question how guaranteed his volume is there",
+  'Dallas Goedert': 'Steady weekly floor',
+  'Evan Engram': 'Reliable target earner',
+  'Dalton Kincaid': 'Buffalo receiving-TE role',
+  'Tyler Allgeier': "Goal-line/early-down threat to cut into rookie Love's touches",
+  'James Conner': "Also in the mix for Arizona's early-down and goal-line work",
+  'Rhamondre Stevenson': 'Committee back in an improving Patriots offense',
+  'Zach Charbonnet': 'Change-of-pace back behind Walker-less Seattle backfield',
+  'Cam Skattebo': 'Minor camp tweak already resolved; full workload potential as a rookie',
+  'Tyrone Tracy Jr.': 'Clearest beneficiary if Skattebo misses time',
+  'Bhayshul Tuten': "Took over early-down work after Etienne's departure",
+  'Ashton Jeanty': 'Disappointing rookie year (RB15) despite the hype — regression-to-the-mean value now',
+  'Jordan Mason': 'Popular sleeper the last two years; offensive struggles held him back in 2025',
+  'Trevor Lawrence': "2025's biggest league-winner at QB; led Jacksonville to the AFC South title",
+  'Jared Goff': 'QB1-caliber four straight seasons under a new OC',
+  'Brock Purdy': 'Efficient, with Mike Evans newly added to the arsenal',
+  'Bo Nix': 'Ascending Year 2 QB, now with Jaylen Waddle added via trade',
+  'Justin Herbert': 'High weekly ceiling arm talent',
+  'Khalil Shakir': 'Reliable underneath option for Allen',
+  'Keon Coleman': "Buffalo's field-stretching WR2",
+  'Garrett Wilson': "Jets' clear top target",
+  'Elic Ayomanor': "Led Titans WRs with just 89 targets last year — low bar, more weapons around him now",
+  'Carnell Tate': 'First rookie WR off the board in most 2026 drafts',
+  "Wan'Dale Robinson": 'Signed to Tennessee; will command a real target share',
+  'Michael Pittman Jr.': 'Signed away from Indianapolis',
+  'Calvin Ridley': "Veteran depth in a suddenly crowded Titans WR room",
+  'Jerry Jeudy': "Cleveland's clear target leader",
+  'Tank Dell': 'Back to full-pads practice after a gruesome multi-ligament injury wiped out 2025 — real upside if you trust the recovery',
+  'Jaylin Noel': "Direct beneficiary of teammate Higgins' season-ending ACL tear",
+  'Baker Mayfield': 'Egbuka is now the clear top target with Evans gone',
+  'Geno Smith': 'Game-manager floor with some ceiling',
+  'C.J. Stroud': "Lost Jayden Higgins for the season to a torn ACL — needs Collins/Dell/Noel to step up",
+  'Daniel Jones': "Broke out in 2025 in Indy behind Tyler Warren's emergence — confirm his camp/roster status before you draft him",
+  'Tua Tagovailoa': 'Released by Miami on a record dead-cap hit; competing with Michael Penix Jr. for the Atlanta job',
+  'Josh Downs': 'Slot role in an ascending Colts passing game',
+  'Alec Pierce': 'Coming off ankle surgery; effectiveness in Week 1 is a question',
+  'Brandon Aiyuk': 'Talented but competing for targets in a deep 49ers WR room',
+  'Ricky Pearsall': 'Ascending in the 49ers offense',
+  'Xavier Legette': 'Boom/bust field-stretcher',
+  'Jalen Coker': 'Sleeper appeal in an offense hunting for pass-catchers',
+  'Darnell Mooney': 'Veteran depth behind London',
+  'Jayden Douglas': "Third-round rookie who has emerged as the clear favorite for Miami's No.1 WR job in camp",
+  'Malik Washington': 'Depth piece in a wide-open Dolphins WR room',
+  'Jalen Tolbert': 'Signed at the veteran minimum for depth',
+  'Chris Olave': "Saints' clear No.1 target",
+  'Rashid Shaheed': 'Re-signed after a midseason deadline deal last year',
+  'Xavier Hutchinson': 'More of a blocking-role receiver in the Houston rotation',
+  'Michael Penix Jr.': 'Competing with Tua Tagovailoa for the starting job',
+  'Sam Darnold': 'Steady bridge/starter option',
+  'J.J. McCarthy': "Now behind/competing with the Kyler Murray addition",
+  'Jaxson Dart': 'Rookie floor already set (QB13 finish); Nabers trending back for Week 1',
+  'Cam Ward': "Real weapon upgrades entering Year 2 (Tate, Wan’Dale Robinson)",
+  'Harold Fannin Jr.': 'TE6 finish as a rookie; better weapons around him, but a shakier QB room',
+  'Jake Ferguson': 'Steady target earner in Dallas',
+  'Mark Andrews': 'Red-zone role in a run-heavy offense',
+  'Cole Kmet': 'Underneath option in a rebuilding WR room',
+  'Isaiah Likely': 'Sleeper appeal behind Andrews',
+  'Chigoziem Okonkwo': 'Athletic upside piece',
+  'Dalton Schultz': "Part of Houston's target committee",
+  'Kenyon Sadiq': 'First-round rookie; hybrid WR/TE usage',
+  'Pat Freiermuth': "Pittsburgh's red-zone TE option",
+  'Zamir White': 'Early-down complement in the Vegas backfield',
+  'Brian Robinson Jr.': 'Between-the-tackles committee back',
+  'Austin Ekeler': 'Change-of-pace, pass-catching role',
+  'Tony Pollard': "Titans' lead back",
+  'Aaron Jones Sr.': 'Committee veteran; ageing but still involved',
+  'Aaron Jones': 'Committee veteran; ageing but still involved',
+  'Najee Harris': 'Depth/committee role after a change of scenery',
+  'Braelon Allen': 'Early-down committee piece',
+  'Ray Davis': "Cook's backup with standalone flash",
+  'Tank Bigsby': 'Complementary back behind Tuten',
+  'Woody Marks': 'Rookie committee piece in the Houston backfield',
+  'Jaylen Wright': "Change-of-pace role behind Achane",
+  'Xavier Flournoy': "Dallas' No.3 WR last season; flashed a real ceiling on starter-level snaps",
+  'Kendrick Bourne': 'Depth insurance behind a crowded Arizona WR room',
+  'Brandon Aubrey': 'Elite leg, high-value kicking offense',
+  'Harrison Butker': 'Consistent scorer in a high-powered offense',
+  'Jake Bates': "Strong leg in Detroit's efficient offense",
+  'Cameron Dicker': 'Reliable volume kicker',
+  'Chris Boswell': 'Steady veteran leg',
+  'Jake Elliott': 'Reliable in a playoff-caliber offense',
+  'Younghoe Koo': 'Consistent scoring chances',
+  'Tyler Bass': "High-powered Bills offense means plenty of chances",
+  "Ka'imi Fairbairn": 'Steady veteran option',
+  'Evan McPherson': 'Strong leg, high-upside offense',
+  'Seahawks D/ST': 'Preseason top-ranked fantasy defense',
+  'Texans D/ST': 'Elite front seven, takeaway upside',
+  'Rams D/ST': 'Strong all-around unit',
+  'Broncos D/ST': 'Pressure and turnover upside',
+  'Steelers D/ST': 'Perennial havoc-rate leader',
+  'Ravens D/ST': 'Aggressive, high-turnover scheme',
+  'Vikings D/ST': 'Disruptive front, solid floor',
+  'Eagles D/ST': 'Deep, talented roster',
+  '49ers D/ST': 'Talented when healthy',
+  'Packers D/ST': 'Ball-hawking secondary',
+};
 
-const PLAYER_DATA = [
-  P('Bijan Robinson', 'RB', 'ATL', 'Led the NFL in scrimmage yards last season (2,298)'),
-  P('Jahmyr Gibbs', 'RB', 'DET', '1,223 rush yds/13 TD + 117 catches; Montgomery traded away, clear bell cow'),
-  P("Ja'Marr Chase", 'WR', 'CIN', 'Top-5 WR in points/game in 4 of the last 5 seasons'),
-  P('Justin Jefferson', 'WR', 'MIN', 'Dominant with every QB except last year; buy-low with Kyler Murray now throwing'),
-  P('Puka Nacua', 'WR', 'LAR', "Last year's WR1; offseason rehab-facility stay adds risk in his contract year"),
-  P('Amon-Ra St. Brown', 'WR', 'DET', 'Top-3 WR three straight seasons'),
-  P('CeeDee Lamb', 'WR', 'DAL', 'Injury-shortened last year; now shares Dallas targets with George Pickens'),
-  P('Malik Nabers', 'WR', 'NYG', 'On a 2-for-2 top-12 pace before a Week 4 ACL tear; trending to go Week 1'),
-  P('Brian Thomas Jr.', 'WR', 'JAX', 'Big-play alpha in a Jaguars offense that won the AFC South'),
-  P('Saquon Barkley', 'RB', 'PHI', 'Historic 2024 gave way to regression last year; some are fading him at cost'),
-  P("De'Von Achane", 'RB', 'MIA', "Led the NFL in yards/touch; new run-first scheme without Tua/McDaniel adds risk"),
-  P('Christian McCaffrey', 'RB', 'SF', 'No.1 overall fantasy scorer last year at age 30 — huge ceiling, real injury history'),
-  P('Nico Collins', 'WR', 'HOU', "Clear WR1 after teammate Jayden Higgins' season-ending ACL tear"),
-  P('Drake London', 'WR', 'ATL', "Atlanta's clear No.1 target regardless of who wins the QB battle"),
-  P('A.J. Brown', 'WR', 'NE', 'Traded to New England to pair with Drake Maye; six 1,000-yd seasons in seven years'),
-  P('Trey McBride', 'TE', 'ARI', 'Wore the fantasy TE1 crown last season'),
-  P('Brock Bowers', 'TE', 'LV', 'Best offensive context of his career entering this year'),
-  P('Jaxon Smith-Njigba', 'WR', 'SEA', 'WR2 in total scoring last year; some regression risk after the breakout'),
-  P('Derrick Henry', 'RB', 'BAL', 'Still defying the age curve'),
-  P('Josh Allen', 'QB', 'BUF', 'QB1 in four of the last six years; 14 rushing TDs last season'),
-  P('Josh Jacobs', 'RB', 'GB', 'Steady RB1 in Green Bay, though an ongoing legal matter is worth monitoring'),
-  P('Jonathan Taylor', 'RB', 'IND', 'Some models project fewer TDs after a huge 2025'),
-  P('Kyren Williams', 'RB', 'LAR', 'Top-10 points/game at the position three straight years'),
-  P('James Cook', 'RB', 'BUF', 'Led the NFL in rushing yards last season (1,621)'),
-  P('DeVonta Smith', 'WR', 'PHI', "Philly's clear WR1 now that A.J. Brown is gone"),
-  P('George Pickens', 'WR', 'DAL', "Now sharing Dallas' passing game with Lamb"),
-  P('Rashee Rice', 'WR', 'KC', 'Less off-field uncertainty than a year ago, but missed minicamp on a legal matter'),
-  P('Marvin Harrison Jr.', 'WR', 'ARI', 'Talent is obvious; offense still finding its footing'),
-  P('Ken Walker III', 'RB', 'KC', 'Big free-agent add in Kansas City; early timeshare while Mahomes ramps back from knee surgery'),
-  P('Breece Hall', 'RB', 'NYJ', 'Talented three-down profile in a run-first-leaning offense'),
-  P('Chase Brown', 'RB', 'CIN', 'Efficient three-down back; O-line and backfield competition are the concerns'),
-  P('Colston Loveland', 'TE', 'CHI', 'No.2 scoring TE from Week 9 on as a rookie, capped by an explosive playoff run'),
-  P('Tyler Warren', 'TE', 'IND', '76/817/4 as a rookie; Pittman traded away, even more targets up for grabs'),
-  P('Javonte Williams', 'RB', 'DAL', 'Returned RB1 value last year and Dallas paid to keep him'),
-  P('Lamar Jackson', 'QB', 'BAL', 'Down year in 2025 (13 games); new playcaller, buy-low rebound candidate'),
-  P('Tucker Kraft', 'TE', 'GB', 'Was playing like the TE1 before a Week 9 ACL/meniscus tear; trending toward Week 1'),
-  P('Sam LaPorta', 'TE', 'DET', 'Coming off offseason back surgery for a herniated disc'),
-  P('Jeremiyah Love', 'RB', 'ARI', "No.3 overall pick in April's draft; high-ankle sprain in camp, hopeful for Wk1, but Allgeier/Conner cut into goal-line work"),
-  P('Mike Evans', 'WR', 'SF', 'Left Tampa Bay for San Francisco in free agency'),
-  P('Emeka Egbuka', 'WR', 'TB', "Clear path to Tampa's top target role with Evans gone; 68/938/6 as a rookie"),
-  P('Tyreek Hill', 'WR', 'MIA', "Miami's rebuild (Waddle traded away) clouds an aging, still-explosive profile"),
-  P('Jaylen Waddle', 'WR', 'DEN', 'Traded to Denver; boosts Bo Nix as much as himself'),
-  P('David Montgomery', 'RB', 'HOU', 'Traded from Detroit; projected as a featured back in Houston'),
-  P('Alvin Kamara', 'RB', 'NO', 'Sprained MCL in camp, expected to miss about a month to start the season'),
-  P('Kyle Pitts', 'TE', 'ATL', 'New extension, but Atlanta QB uncertainty caps the outlook'),
-  P('Drake Maye', 'QB', 'NE', 'QB3 finish last year; added A.J. Brown and Romeo Doubs this offseason'),
-  P('Bucky Irving', 'RB', 'TB', 'Electric rookie tape, but real red flags around his 2026 role'),
-  P('Jonathon Brooks', 'RB', 'CAR', "Back from a second ACL tear in the same knee within 13 months; Carolina let Dowdle walk and passed on RB in the draft, sign of confidence"),
-  P('George Kittle', 'TE', 'SF', 'Still a reliable weekly floor'),
-  P('Travis Kelce', 'TE', 'KC', 'Some analysts are fading him purely on age and price'),
-  P('DK Metcalf', 'WR', 'PIT', 'Field-stretching No.1 option'),
-  P('Zay Flowers', 'WR', 'BAL', 'Lead slot role in a run-heavy Baltimore offense'),
-  P('Jordan Addison', 'WR', 'MIN', "Vikings' No.2 behind Jefferson"),
-  P('Xavier Worthy', 'WR', 'KC', 'Field-stretcher in a crowded Chiefs passing game'),
-  P('Jameson Williams', 'WR', 'DET', 'Best season of his career last year (65/1,117/7); some call the efficiency a mirage'),
-  P('Chuba Hubbard', 'RB', 'CAR', 'Hamstring strain in camp (week-to-week); Brooks pushing hard for touches behind him'),
-  P('Dak Prescott', 'QB', 'DAL', 'Topped 4,500 passing yards last season on limited rushing'),
-  P('Kenneth Gainwell', 'RB', 'PIT', '13.3 touches/17.8 PPG from Week 8 on last year; standalone value with White gone from Tampa'),
-  P('Rico Dowdle', 'RB', 'PIT', 'Reunited with his old head coach; splitting first-team camp reps with Warren'),
-  P('Jaylen Warren', 'RB', 'PIT', "Splitting Pittsburgh's backfield reps with Dowdle"),
-  P('Jalen Hurts', 'QB', 'PHI', 'Reliable rushing floor for a reigning Super Bowl roster'),
-  P('Joe Burrow', 'QB', 'CIN', 'Elite ceiling in every game he finishes healthy'),
-  P('Jayden Daniels', 'QB', 'WAS', 'Missed time last year (knee/hamstring/elbow) but was a playoff force when healthy'),
-  P('Rome Odunze', 'WR', 'CHI', 'Part of a full receiver-room rebuild after the Moore trade'),
-  P('Ladd McConkey', 'WR', 'LAC', 'Ascending slot weapon'),
-  P('Tetairoa McMillan', 'WR', 'CAR', 'Led all rookie WRs last season (WR15 finish)'),
-  P('Christian Watson', 'WR', 'GB', 'High-upside boom piece, but has missed 20 games over four seasons'),
-  P('Isiah Pacheco', 'RB', 'KC', 'Now timesharing early-down work after the Walker signing'),
-  P("D'Andre Swift", 'RB', 'CHI', "Bigger role possible if rookie Monangai's knee costs him time"),
-  P('Kyle Monangai', 'RB', 'CHI', 'Hyperextended knee in camp; ADP already sliding, still worth a late-round dart'),
-  P('J.K. Dobbins', 'RB', 'DEN', 'Re-signed; injury history, but a real path to lead work'),
-  P('Caleb Williams', 'QB', 'CHI', 'Improving in Year 2; some call him overpriced next to Stafford/Purdy at similar cost'),
-  P('Patrick Mahomes', 'QB', 'KC', 'Recovering from a torn ACL/LCL — watch his Week 1 workload closely'),
-  P('Matthew Stafford', 'QB', 'LAR', 'QB3 finish last year on almost zero rushing value'),
-  P('Kyler Murray', 'QB', 'MIN', "New team via free agency after Arizona's release; big rushing/passing combo when healthy"),
-  P('Terry McLaurin', 'WR', 'WAS', 'Down year last season per most models; catches from an improving Daniels'),
-  P('Stefon Diggs', 'WR', 'WAS', 'Signed August 7 — ADP is still settling'),
-  P('Jayden Reed', 'WR', 'GB', 'Benefits from vacated Green Bay targets'),
-  P('Romeo Doubs', 'WR', 'NE', 'Signed to pair with A.J. Brown and Maye'),
-  P('Hollywood Brown', 'WR', 'PHI', 'Signed as depth; WR2 upside if the target tree shakes out his way'),
-  P('DJ Moore', 'WR', 'BUF', "Traded from Chicago to Buffalo; some question how guaranteed his volume is there"),
-  P('Dallas Goedert', 'TE', 'PHI', 'Steady weekly floor'),
-  P('Evan Engram', 'TE', 'DEN', 'Reliable target earner'),
-  P('Dalton Kincaid', 'TE', 'BUF', 'Buffalo receiving-TE role'),
-  P('Tyler Allgeier', 'RB', 'ARI', "Goal-line/early-down threat to cut into rookie Love's touches"),
-  P('James Conner', 'RB', 'ARI', "Also in the mix for Arizona's early-down and goal-line work"),
-  P('Rhamondre Stevenson', 'RB', 'NE', 'Committee back in an improving Patriots offense'),
-  P('Zach Charbonnet', 'RB', 'SEA', 'Change-of-pace back behind Walker-less Seattle backfield'),
-  P('Cam Skattebo', 'RB', 'NYG', 'Minor camp tweak already resolved; full workload potential as a rookie'),
-  P('Tyrone Tracy Jr.', 'RB', 'NYG', 'Clearest beneficiary if Skattebo misses time'),
-  P('Bhayshul Tuten', 'RB', 'JAX', "Took over early-down work after Etienne's departure"),
-  P('Ashton Jeanty', 'RB', 'LV', 'Disappointing rookie year (RB15) despite the hype — regression-to-the-mean value now'),
-  P('Jordan Mason', 'RB', 'MIN', 'Popular sleeper the last two years; offensive struggles held him back in 2025'),
-  P('Trevor Lawrence', 'QB', 'JAX', "2025's biggest league-winner at QB; led Jacksonville to the AFC South title"),
-  P('Jared Goff', 'QB', 'DET', 'QB1-caliber four straight seasons under a new OC'),
-  P('Brock Purdy', 'QB', 'SF', 'Efficient, with Mike Evans newly added to the arsenal'),
-  P('Bo Nix', 'QB', 'DEN', 'Ascending Year 2 QB, now with Jaylen Waddle added via trade'),
-  P('Justin Herbert', 'QB', 'LAC', 'High weekly ceiling arm talent'),
-  P('Khalil Shakir', 'WR', 'BUF', 'Reliable underneath option for Allen'),
-  P('Keon Coleman', 'WR', 'BUF', "Buffalo's field-stretching WR2"),
-  P('Garrett Wilson', 'WR', 'NYJ', "Jets' clear top target"),
-  P('Elic Ayomanor', 'WR', 'TEN', "Led Titans WRs with just 89 targets last year — low bar, more weapons around him now"),
-  P('Carnell Tate', 'WR', 'TEN', 'First rookie WR off the board in most 2026 drafts'),
-  P("Wan'Dale Robinson", 'WR', 'TEN', 'Signed to Tennessee; will command a real target share'),
-  P('Michael Pittman Jr.', 'WR', 'PIT', 'Signed away from Indianapolis'),
-  P('Calvin Ridley', 'WR', 'TEN', "Veteran depth in a suddenly crowded Titans WR room"),
-  P('Jerry Jeudy', 'WR', 'CLE', "Cleveland's clear target leader"),
-  P('Tank Dell', 'WR', 'HOU', 'Back to full-pads practice after a gruesome multi-ligament injury wiped out 2025 — real upside if you trust the recovery'),
-  P('Jaylin Noel', 'WR', 'HOU', "Direct beneficiary of teammate Higgins' season-ending ACL tear"),
-  P('Baker Mayfield', 'QB', 'TB', 'Egbuka is now the clear top target with Evans gone'),
-  P('Geno Smith', 'QB', 'LV', 'Game-manager floor with some ceiling'),
-  P('C.J. Stroud', 'QB', 'HOU', "Lost Jayden Higgins for the season to a torn ACL — needs Collins/Dell/Noel to step up"),
-  P('Daniel Jones', 'QB', 'IND', "Broke out in 2025 in Indy behind Tyler Warren's emergence — confirm his camp/roster status before you draft him"),
-  P('Tua Tagovailoa', 'QB', 'ATL', 'Released by Miami on a record dead-cap hit; competing with Michael Penix Jr. for the Atlanta job'),
-  P('Josh Downs', 'WR', 'IND', 'Slot role in an ascending Colts passing game'),
-  P('Alec Pierce', 'WR', 'IND', 'Coming off ankle surgery; effectiveness in Week 1 is a question'),
-  P('Brandon Aiyuk', 'WR', 'SF', 'Talented but competing for targets in a deep 49ers WR room'),
-  P('Ricky Pearsall', 'WR', 'SF', 'Ascending in the 49ers offense'),
-  P('Xavier Legette', 'WR', 'CAR', 'Boom/bust field-stretcher'),
-  P('Jalen Coker', 'WR', 'CAR', 'Sleeper appeal in an offense hunting for pass-catchers'),
-  P('Darnell Mooney', 'WR', 'ATL', 'Veteran depth behind London'),
-  P('Jayden Douglas', 'WR', 'MIA', "Third-round rookie who has emerged as the clear favorite for Miami's No.1 WR job in camp"),
-  P('Malik Washington', 'WR', 'MIA', 'Depth piece in a wide-open Dolphins WR room'),
-  P('Jalen Tolbert', 'WR', 'MIA', 'Signed at the veteran minimum for depth'),
-  P('Chris Olave', 'WR', 'NO', "Saints' clear No.1 target"),
-  P('Rashid Shaheed', 'WR', 'SEA', 'Re-signed after a midseason deadline deal last year'),
-  P('Xavier Hutchinson', 'WR', 'HOU', 'More of a blocking-role receiver in the Houston rotation'),
-  P('Michael Penix Jr.', 'QB', 'ATL', 'Competing with Tua Tagovailoa for the starting job'),
-  P('Sam Darnold', 'QB', 'SEA', 'Steady bridge/starter option'),
-  P('J.J. McCarthy', 'QB', 'MIN', "Now behind/competing with the Kyler Murray addition"),
-  P('Jaxson Dart', 'QB', 'NYG', 'Rookie floor already set (QB13 finish); Nabers trending back for Week 1'),
-  P('Cam Ward', 'QB', 'TEN', 'Real weapon upgrades entering Year 2 (Tate, Wan\u2019Dale Robinson)'),
-  P('Harold Fannin Jr.', 'TE', 'CLE', 'TE6 finish as a rookie; better weapons around him, but a shakier QB room'),
-  P('Jake Ferguson', 'TE', 'DAL', 'Steady target earner in Dallas'),
-  P('Mark Andrews', 'TE', 'BAL', 'Red-zone role in a run-heavy offense'),
-  P('Cole Kmet', 'TE', 'CHI', 'Underneath option in a rebuilding WR room'),
-  P('Isaiah Likely', 'TE', 'BAL', 'Sleeper appeal behind Andrews'),
-  P('Chigoziem Okonkwo', 'TE', 'TEN', 'Athletic upside piece'),
-  P('Dalton Schultz', 'TE', 'HOU', "Part of Houston's target committee"),
-  P('Kenyon Sadiq', 'TE', 'NYJ', 'First-round rookie; hybrid WR/TE usage'),
-  P('Pat Freiermuth', 'TE', 'PIT', "Pittsburgh's red-zone TE option"),
-  P('Zamir White', 'RB', 'LV', 'Early-down complement in the Vegas backfield'),
-  P('Brian Robinson Jr.', 'RB', 'WAS', 'Between-the-tackles committee back'),
-  P('Austin Ekeler', 'RB', 'WAS', 'Change-of-pace, pass-catching role'),
-  P('Tony Pollard', 'RB', 'TEN', "Titans' lead back"),
-  P('Aaron Jones', 'RB', 'MIN', 'Committee veteran; ageing but still involved'),
-  P('Najee Harris', 'RB', 'LAC', 'Depth/committee role after a change of scenery'),
-  P('Braelon Allen', 'RB', 'NYJ', 'Early-down committee piece'),
-  P('Ray Davis', 'RB', 'BUF', "Cook's backup with standalone flash"),
-  P('Tank Bigsby', 'RB', 'JAX', 'Complementary back behind Tuten'),
-  P('Woody Marks', 'RB', 'HOU', 'Rookie committee piece in the Houston backfield'),
-  P('Jaylen Wright', 'RB', 'MIA', "Change-of-pace role behind Achane"),
-  P('Xavier Flournoy', 'WR', 'DAL', "Dallas' No.3 WR last season; flashed a real ceiling on starter-level snaps"),
-  P('Kendrick Bourne', 'WR', 'ARI', 'Depth insurance behind a crowded Arizona WR room'),
-  P('Brandon Aubrey', 'K', 'DAL', 'Elite leg, high-value kicking offense'),
-  P('Harrison Butker', 'K', 'KC', 'Consistent scorer in a high-powered offense'),
-  P('Jake Bates', 'K', 'DET', "Strong leg in Detroit's efficient offense"),
-  P('Cameron Dicker', 'K', 'LAC', 'Reliable volume kicker'),
-  P('Chris Boswell', 'K', 'PIT', 'Steady veteran leg'),
-  P('Jake Elliott', 'K', 'PHI', 'Reliable in a playoff-caliber offense'),
-  P('Younghoe Koo', 'K', 'ATL', 'Consistent scoring chances'),
-  P('Tyler Bass', 'K', 'BUF', "High-powered Bills offense means plenty of chances"),
-  P("Ka'imi Fairbairn", 'K', 'HOU', 'Steady veteran option'),
-  P('Evan McPherson', 'K', 'CIN', 'Strong leg, high-upside offense'),
-  P('Seahawks D/ST', 'DEF', 'SEA', 'Preseason top-ranked fantasy defense'),
-  P('Texans D/ST', 'DEF', 'HOU', 'Elite front seven, takeaway upside'),
-  P('Rams D/ST', 'DEF', 'LAR', 'Strong all-around unit'),
-  P('Broncos D/ST', 'DEF', 'DEN', 'Pressure and turnover upside'),
-  P('Steelers D/ST', 'DEF', 'PIT', 'Perennial havoc-rate leader'),
-  P('Ravens D/ST', 'DEF', 'BAL', 'Aggressive, high-turnover scheme'),
-  P('Vikings D/ST', 'DEF', 'MIN', 'Disruptive front, solid floor'),
-  P('Eagles D/ST', 'DEF', 'PHI', 'Deep, talented roster'),
-  P('49ers D/ST', 'DEF', 'SF', 'Talented when healthy'),
-  P('Packers D/ST', 'DEF', 'GB', 'Ball-hawking secondary'),
-];
+/* ------------------------------------------------------------------ */
+/*  Scoring-format helpers (app labels ↔ DB enum values)              */
+/* ------------------------------------------------------------------ */
+const scoringToDb = (s) => s === 'half' ? 'half_ppr' : s === 'ppr' ? 'full_ppr' : 'standard';
+const scoringFromDb = (s) => s === 'half_ppr' ? 'half' : s === 'full_ppr' ? 'ppr' : 'standard';
+
+/* ------------------------------------------------------------------ */
+/*  Exposure penalty — tunable constant next to NEED_WEIGHT           */
+/* ------------------------------------------------------------------ */
+const CROSS_LEAGUE_EXPOSURE_PENALTY = -60;
 
 const DEFAULT_ROSTER = { QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, K: 1, DEF: 1 };
 const STARTER_ORDER = ['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'K', 'DEF'];
@@ -380,7 +396,7 @@ function RecCard({ player, posRank, reason, primary, onDraft, onTaken }) {
           <span className="font-semibold text-sm truncate">{player.name}</span>
           <UpdateBadge update={player.liveUpdate} />
         </div>
-        <span className="ff-mono ff-muted text-[11px] shrink-0">{player.team} \u00b7 {player.pos}{posRank}</span>
+        <span className="ff-mono ff-muted text-[11px] shrink-0">{player.team} · {player.pos}{posRank}</span>
       </div>
       <div className="ff-muted text-xs leading-snug">{player.note}</div>
       <div className="ff-gold text-[11px] font-semibold ff-display">{reason}</div>
@@ -399,7 +415,7 @@ function RecCard({ player, posRank, reason, primary, onDraft, onTaken }) {
 /* ------------------------------------------------------------------ */
 /*  Settings form (used for initial setup + editing later)             */
 /* ------------------------------------------------------------------ */
-function SettingsForm({ draft, setDraft, onSubmit, submitLabel }) {
+function SettingsForm({ draft, setDraft, onSubmit, submitLabel, submitting }) {
   const set = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
   const setRoster = (k, v) => setDraft((d) => ({ ...d, roster: { ...d.roster, [k]: v } }));
 
@@ -422,6 +438,17 @@ function SettingsForm({ draft, setDraft, onSubmit, submitLabel }) {
 
   return (
     <div className="flex flex-col gap-5">
+      <label className="flex flex-col gap-1">
+        <span className="ff-muted text-xs ff-display">League name</span>
+        <input
+          type="text"
+          className="ff-input rounded-md px-2 py-1.5 text-sm w-full"
+          value={draft.leagueName || ''}
+          placeholder="e.g. My 12-Team League"
+          onChange={(e) => set('leagueName', e.target.value)}
+        />
+      </label>
+
       <div className="grid grid-cols-2 gap-3">
         <NumField label="Teams in league" value={draft.numTeams} min={4} max={16} onChange={(v) => set('numTeams', v)} />
         <NumField
@@ -454,7 +481,7 @@ function SettingsForm({ draft, setDraft, onSubmit, submitLabel }) {
           ))}
         </div>
         <div className="ff-muted text-[11px] mt-1.5">
-          This mainly nudges pass-catching RBs and possession WRs up or down the board \u2014 the app doesn't
+          This mainly nudges pass-catching RBs and possession WRs up or down the board — the app doesn't
           auto-reorder players yet, so use it as a reminder while you edit the notes/ranks that matter to your league.
         </div>
       </div>
@@ -473,8 +500,13 @@ function SettingsForm({ draft, setDraft, onSubmit, submitLabel }) {
         </div>
       </div>
 
-      <button onClick={onSubmit} className="ff-bg-gold rounded-lg py-3 font-bold ff-display text-sm mt-1" style={{ color: '#12141E' }}>
-        {submitLabel}
+      <button
+        onClick={onSubmit}
+        disabled={submitting}
+        className="ff-bg-gold rounded-lg py-3 font-bold ff-display text-sm mt-1 disabled:opacity-60"
+        style={{ color: '#12141E' }}
+      >
+        {submitting ? 'Creating...' : submitLabel}
       </button>
     </div>
   );
@@ -492,7 +524,9 @@ export default function FantasyDraftAssistant() {
   const [posFilter, setPosFilter] = useState('ALL');
   const [search, setSearch] = useState('');
 
+  /* draft settings */
   const [draft, setDraft] = useState({
+    leagueName: '',
     numTeams: 10,
     myPosition: 5,
     scoring: 'half',
@@ -500,8 +534,24 @@ export default function FantasyDraftAssistant() {
     benchSize: 6,
   });
 
-  const [players, setPlayers] = useState(() => PLAYER_DATA.map((p) => ({ ...p, status: 'available' })));
+  /* player data — raw from Supabase, statuses tracked separately */
+  const [rawPlayers, setRawPlayers] = useState([]);
+  const [playerStatuses, setPlayerStatuses] = useState({}); // { [player_id]: 'mine'|'taken' }
+  const [playersLoading, setPlayersLoading] = useState(true);
+  const [playersError, setPlayersError] = useState(null);
+
+  /* pick history (for undo) */
   const [pickLog, setPickLog] = useState([]); // [{overall, playerId, status}]
+
+  /* league management */
+  const [activeDraftId, setActiveDraftId] = useState(null);
+  const [leagues, setLeagues] = useState([]);
+  const [leaguesLoading, setLeaguesLoading] = useState(true);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+
+  /* cross-league exposure */
+  const [myPlayersInOtherLeagues, setMyPlayersInOtherLeagues] = useState(new Map());
+  const [diversifyEnabled, setDiversifyEnabled] = useState(true);
 
   /* live news/injury updates, keyed by player id */
   const [liveUpdates, setLiveUpdates] = useState({});
@@ -509,18 +559,23 @@ export default function FantasyDraftAssistant() {
   const [updatesError, setUpdatesError] = useState(null);
   const [lastChecked, setLastChecked] = useState(null);
 
+  /* sync error shown when a Supabase pick write fails */
+  const [syncError, setSyncError] = useState(null);
+
   /* ---------------- storage load/save (browser localStorage) ---------------- */
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('ff-draft-state-v1');
+      const raw = localStorage.getItem('ff-draft-state-v2');
       if (raw) {
         const data = JSON.parse(raw);
         if (data.draft) setDraft(data.draft);
-        if (data.players) setPlayers(data.players);
+        if (data.playerStatuses) setPlayerStatuses(data.playerStatuses);
         if (data.pickLog) setPickLog(data.pickLog);
         if (data.setupDone) setSetupDone(data.setupDone);
         if (data.liveUpdates) setLiveUpdates(data.liveUpdates);
         if (data.lastChecked) setLastChecked(data.lastChecked);
+        if (data.activeDraftId != null) setActiveDraftId(data.activeDraftId);
+        if (data.diversifyEnabled != null) setDiversifyEnabled(data.diversifyEnabled);
       }
     } catch (e) {
       /* nothing saved yet, or storage unavailable */
@@ -532,13 +587,102 @@ export default function FantasyDraftAssistant() {
     if (!loaded) return;
     try {
       localStorage.setItem(
-        'ff-draft-state-v1',
-        JSON.stringify({ draft, players, pickLog, setupDone, liveUpdates, lastChecked })
+        'ff-draft-state-v2',
+        JSON.stringify({
+          draft,
+          playerStatuses,
+          pickLog,
+          setupDone,
+          liveUpdates,
+          lastChecked,
+          activeDraftId,
+          diversifyEnabled,
+        })
       );
     } catch (e) {
-      /* ignore save errors (e.g. private browsing storage limits) */
+      /* ignore save errors */
     }
-  }, [draft, players, pickLog, setupDone, liveUpdates, lastChecked, loaded]);
+  }, [draft, playerStatuses, pickLog, setupDone, liveUpdates, lastChecked, loaded, activeDraftId, diversifyEnabled]);
+
+  /* ---------------- Supabase: load player data on mount ---------------- */
+  useEffect(() => {
+    supabase
+      .from('current_draft_board')
+      .select('player_id, full_name, position, team_id, overall_rank, latest_severity, latest_note, latest_update_at')
+      .order('overall_rank')
+      .then(({ data, error }) => {
+        if (error) {
+          setPlayersError('Could not load player data. Check your connection and Supabase env vars.');
+          setPlayersLoading(false);
+          return;
+        }
+        setRawPlayers(
+          (data || []).map((p) => ({
+            id: p.player_id,
+            name: p.full_name,
+            pos: p.position,
+            team: p.team_id || '',
+            rank: p.overall_rank || 9999,
+            note: PLAYER_NOTES[p.full_name] || '',
+          }))
+        );
+        /* pre-populate liveUpdates from any DB-stored news/injury records */
+        const dbUpdates = {};
+        (data || []).forEach((p) => {
+          if (p.latest_severity && p.latest_note) {
+            dbUpdates[p.player_id] = {
+              severity: p.latest_severity,
+              note: p.latest_note,
+              checkedAt: p.latest_update_at,
+            };
+          }
+        });
+        if (Object.keys(dbUpdates).length > 0) {
+          setLiveUpdates((prev) => ({ ...dbUpdates, ...prev }));
+        }
+        setPlayersLoading(false);
+      });
+  }, []);
+
+  /* ---------------- Supabase: load leagues list on mount ---------------- */
+  useEffect(() => {
+    supabase
+      .from('drafts')
+      .select('draft_id, league_name, num_teams, my_position, scoring_format, roster_config')
+      .order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (!error && data) setLeagues(data);
+        setLeaguesLoading(false);
+      });
+  }, []);
+
+  /* ---------------- Supabase: cross-league exposure query ---------------- */
+  useEffect(() => {
+    if (activeDraftId == null) {
+      setMyPlayersInOtherLeagues(new Map());
+      return;
+    }
+    supabase
+      .from('draft_picks')
+      .select('player_id, drafts(league_name)')
+      .eq('drafted_by', 'me')
+      .neq('draft_id', activeDraftId)
+      .then(({ data, error }) => {
+        if (!error && data) {
+          const map = new Map();
+          data.forEach((row) => {
+            map.set(row.player_id, row.drafts?.league_name || 'another league');
+          });
+          setMyPlayersInOtherLeagues(map);
+        }
+      });
+  }, [activeDraftId]);
+
+  /* ---------------- players: derived from rawPlayers + playerStatuses ---------------- */
+  const players = useMemo(
+    () => rawPlayers.map((p) => ({ ...p, status: playerStatuses[p.id] || 'available' })),
+    [rawPlayers, playerStatuses]
+  );
 
   /* ---------------- derived values ---------------- */
   const totalRounds = useMemo(
@@ -614,9 +758,6 @@ export default function FantasyDraftAssistant() {
       const seen = new Set();
       const uniqueList = watchList.filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)));
 
-      // Calls our own serverless function (api/check-updates.js) rather than
-      // Anthropic directly, so the API key never reaches the browser. See
-      // README.md for the environment-variable setup this requires.
       const response = await fetch('/api/check-updates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -707,11 +848,19 @@ export default function FantasyDraftAssistant() {
           reason = `↑ ${update.note}`;
         }
       }
+      /* Cross-league exposure penalty — soft deprioritization, never a filter */
+      if (diversifyEnabled && myPlayersInOtherLeagues.has(p.id)) {
+        score += CROSS_LEAGUE_EXPOSURE_PENALTY;
+        const leagueName = myPlayersInOtherLeagues.get(p.id);
+        if (!reason.startsWith('⚠')) {
+          reason = `Already on your ${leagueName} roster — diversifying`;
+        }
+      }
       return { ...p, score, reason, liveUpdate: update || null };
     });
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, 4);
-  }, [availablePlayers, rosterNeeds, nextMyPick, picksUntilMine, draftComplete, totalRounds, currentRound, liveUpdates]);
+  }, [availablePlayers, rosterNeeds, nextMyPick, picksUntilMine, draftComplete, totalRounds, currentRound, liveUpdates, myPlayersInOtherLeagues, diversifyEnabled]);
 
   const filteredPlayers = useMemo(() => {
     let list = players;
@@ -730,10 +879,34 @@ export default function FantasyDraftAssistant() {
   }, [players, posFilter, search, liveUpdates]);
 
   /* ---------------- handlers ---------------- */
-  const markPlayer = useCallback((playerId, status) => {
-    setPlayers((prev) => prev.map((p) => (p.id === playerId ? { ...p, status } : p)));
-    setPickLog((prev) => [...prev, { overall: prev.length + 1, playerId, status }]);
-  }, []);
+  const markPlayer = useCallback(
+    (playerId, status) => {
+      /* optimistic local update */
+      setPlayerStatuses((prev) => ({ ...prev, [playerId]: status }));
+      setPickLog((prev) => {
+        const overall = prev.length + 1;
+        const { round, slot } = roundAndSlotFor(overall, draft.numTeams);
+        /* background write to Supabase — does not block UI */
+        if (activeDraftId != null) {
+          supabase
+            .from('draft_picks')
+            .insert({
+              draft_id: activeDraftId,
+              player_id: playerId,
+              overall_pick_number: overall,
+              round,
+              slot,
+              drafted_by: status === 'mine' ? 'me' : 'opponent',
+            })
+            .then(({ error }) => {
+              if (error) setSyncError('Pick not synced to cloud — saved locally only.');
+            });
+        }
+        return [...prev, { overall, playerId, status }];
+      });
+    },
+    [activeDraftId, draft.numTeams]
+  );
 
   const handleDraft = useCallback((id) => markPlayer(id, 'mine'), [markPlayer]);
   const handleTaken = useCallback((id) => markPlayer(id, 'taken'), [markPlayer]);
@@ -742,24 +915,107 @@ export default function FantasyDraftAssistant() {
     setPickLog((prev) => {
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1];
-      setPlayers((pl) => pl.map((p) => (p.id === last.playerId ? { ...p, status: 'available' } : p)));
+      setPlayerStatuses((ps) => {
+        const next = { ...ps };
+        delete next[last.playerId];
+        return next;
+      });
       return prev.slice(0, -1);
     });
   }, []);
 
-  const startDraft = () => {
+  /* Select an existing league from the DB list */
+  const selectLeague = useCallback(async (league) => {
+    const config = league.roster_config || {};
+    const { BN: benchSize = 6, QB = 1, RB = 2, WR = 2, TE = 1, FLEX = 1, K = 1, DEF = 1 } = config;
+    setDraft({
+      leagueName: league.league_name || '',
+      numTeams: league.num_teams,
+      myPosition: league.my_position,
+      scoring: scoringFromDb(league.scoring_format),
+      roster: { QB, RB, WR, TE, FLEX, K, DEF },
+      benchSize,
+    });
+    setActiveDraftId(league.draft_id);
+
+    /* load existing picks for this draft so the board reflects them */
+    const { data: picks } = await supabase
+      .from('draft_picks')
+      .select('player_id, drafted_by, overall_pick_number')
+      .eq('draft_id', league.draft_id)
+      .order('overall_pick_number');
+
+    if (picks && picks.length > 0) {
+      const statuses = {};
+      picks.forEach((p) => { statuses[p.player_id] = p.drafted_by === 'me' ? 'mine' : 'taken'; });
+      setPlayerStatuses(statuses);
+      setPickLog(picks.map((p) => ({ overall: p.overall_pick_number, playerId: p.player_id, status: statuses[p.player_id] })));
+    } else {
+      setPlayerStatuses({});
+      setPickLog([]);
+    }
+
+    setSetupDone(true);
+  }, []);
+
+  /* Create a new league in DB then enter draft */
+  const startDraft = useCallback(async () => {
+    setCreatingDraft(true);
+    try {
+      const rosterConfig = { ...draft.roster, BN: draft.benchSize };
+      const { data, error } = await supabase
+        .from('drafts')
+        .insert({
+          season_year: 2026,
+          league_name: draft.leagueName || 'My League',
+          num_teams: draft.numTeams,
+          my_position: draft.myPosition,
+          scoring_format: scoringToDb(draft.scoring),
+          roster_config: rosterConfig,
+        })
+        .select('draft_id')
+        .single();
+
+      if (!error && data) {
+        setActiveDraftId(data.draft_id);
+        setLeagues((prev) => [
+          { draft_id: data.draft_id, league_name: draft.leagueName || 'My League', num_teams: draft.numTeams, my_position: draft.myPosition, scoring_format: scoringToDb(draft.scoring), roster_config: rosterConfig },
+          ...prev,
+        ]);
+      } else {
+        setSyncError('Could not save league to cloud — picks will be local only.');
+      }
+    } catch (e) {
+      setSyncError('Could not save league to cloud — picks will be local only.');
+    }
+    setPlayerStatuses({});
+    setPickLog([]);
     setSetupDone(true);
     setShowSettings(false);
-  };
+    setCreatingDraft(false);
+  }, [draft]);
 
   const doReset = () => {
-    setPlayers(PLAYER_DATA.map((p) => ({ ...p, status: 'available' })));
+    setPlayerStatuses({});
     setPickLog([]);
     setConfirmReset(false);
     setShowSettings(false);
   };
 
   const lastPickPlayerId = pickLog.length ? pickLog[pickLog.length - 1].playerId : null;
+
+  /* ---------------- loading screen ---------------- */
+  if (!loaded) {
+    return (
+      <div className="ff-root rounded-2xl p-8 max-w-3xl mx-auto flex items-center justify-center min-h-48">
+        <Tokens />
+        <div className="flex flex-col items-center gap-3">
+          <div className="ff-bg-gold rounded-md p-2"><Trophy size={20} color="#12141E" /></div>
+          <RefreshCw size={16} className="ff-spin ff-muted" />
+        </div>
+      </div>
+    );
+  }
 
   /* ---------------- setup screen ---------------- */
   if (!setupDone) {
@@ -772,10 +1028,84 @@ export default function FantasyDraftAssistant() {
         </div>
         <h1 className="ff-display text-3xl sm:text-4xl font-bold mb-1">Draft Command Center</h1>
         <p className="ff-muted text-sm mb-6">
-          Set your league up once. From here on, every pick you mark \u2014 yours or anyone else's \u2014 updates
+          Set your league up once. From here on, every pick you mark — yours or anyone else's — updates
           who you should target next.
         </p>
-        <SettingsForm draft={draft} setDraft={setDraft} onSubmit={startDraft} submitLabel="Enter the War Room" />
+
+        {/* existing leagues */}
+        {(leaguesLoading || leagues.length > 0) && (
+          <div className="mb-6">
+            <div className="ff-muted text-xs ff-display mb-2 flex items-center gap-1.5">
+              Continue an existing draft
+            </div>
+            {leaguesLoading ? (
+              <div className="ff-muted text-xs flex items-center gap-1.5 py-2">
+                <RefreshCw size={12} className="ff-spin" /> Loading your leagues…
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {leagues.map((league) => (
+                  <button
+                    key={league.draft_id}
+                    onClick={() => selectLeague(league)}
+                    className="ff-panel-raised rounded-lg px-4 py-3 text-left ff-transition hover:brightness-110 w-full"
+                  >
+                    <div className="font-semibold text-sm">{league.league_name || `Draft #${league.draft_id}`}</div>
+                    <div className="ff-muted text-xs mt-0.5">
+                      {league.num_teams} teams · Slot {league.my_position} ·{' '}
+                      {scoringFromDb(league.scoring_format) === 'half'
+                        ? 'Half PPR'
+                        : scoringFromDb(league.scoring_format) === 'ppr'
+                        ? 'Full PPR'
+                        : 'Standard'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* divider */}
+        <div style={{ borderTop: '1px solid #2A2E3D' }} className="pt-5 mb-4">
+          <div className="ff-muted text-xs ff-display">
+            {leagues.length > 0 ? '— or create a new league —' : 'Create your first league'}
+          </div>
+        </div>
+
+        <SettingsForm
+          draft={draft}
+          setDraft={setDraft}
+          onSubmit={startDraft}
+          submitLabel="Enter the War Room"
+          submitting={creatingDraft}
+        />
+      </div>
+    );
+  }
+
+  /* ---------------- players loading / error screen ---------------- */
+  if (playersError) {
+    return (
+      <div className="ff-root rounded-2xl p-8 max-w-3xl mx-auto flex items-center justify-center min-h-48">
+        <Tokens />
+        <div className="flex flex-col items-center gap-3 text-center">
+          <AlertTriangle size={24} style={{ color: '#E8544A' }} />
+          <div className="text-sm" style={{ color: '#E8544A' }}>{playersError}</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (playersLoading) {
+    return (
+      <div className="ff-root rounded-2xl p-8 max-w-3xl mx-auto flex items-center justify-center min-h-48">
+        <Tokens />
+        <div className="flex flex-col items-center gap-3">
+          <div className="ff-bg-gold rounded-md p-2"><Trophy size={20} color="#12141E" /></div>
+          <div className="ff-muted text-sm">Loading draft board…</div>
+          <RefreshCw size={16} className="ff-spin ff-muted" />
+        </div>
       </div>
     );
   }
@@ -790,9 +1120,11 @@ export default function FantasyDraftAssistant() {
         <div className="flex items-center gap-2 min-w-0">
           <div className="ff-bg-gold rounded-md p-1.5 shrink-0"><Trophy size={16} color="#12141E" /></div>
           <div className="min-w-0">
-            <div className="ff-display text-sm font-bold leading-tight truncate">Draft Command Center</div>
+            <div className="ff-display text-sm font-bold leading-tight truncate">
+              {draft.leagueName || 'Draft Command Center'}
+            </div>
             <div className="ff-muted text-[11px] leading-tight ff-mono">
-              {draft.numTeams}-team \u00b7 Slot {draft.myPosition} \u00b7 {draft.scoring === 'ppr' ? 'Full PPR' : draft.scoring === 'half' ? 'Half PPR' : 'Standard'}
+              {draft.numTeams}-team · Slot {draft.myPosition} · {draft.scoring === 'ppr' ? 'Full PPR' : draft.scoring === 'half' ? 'Half PPR' : 'Standard'}
             </div>
           </div>
         </div>
@@ -816,17 +1148,31 @@ export default function FantasyDraftAssistant() {
         </div>
       </div>
 
+      {/* sync error indicator */}
+      {syncError && (
+        <div
+          className="ff-panel rounded-lg px-3 py-2 mb-3 text-xs flex items-center gap-2"
+          style={{ borderColor: '#E8544A', borderWidth: 1 }}
+        >
+          <AlertTriangle size={12} style={{ color: '#E8544A' }} />
+          <span style={{ color: '#E8544A' }} className="flex-1">{syncError}</span>
+          <button onClick={() => setSyncError(null)} className="ff-muted hover:text-white ff-transition">
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
       {/* update status strip */}
       {(updatesLoading || updatesError || lastChecked) && (
         <div className="ff-panel rounded-lg px-3 py-2 mb-3 text-xs flex items-center gap-2 flex-wrap">
           {updatesLoading ? (
-            <span className="ff-muted flex items-center gap-1.5"><RefreshCw size={12} className="ff-spin" /> Searching for injury &amp; news updates on your available players and roster...</span>
+            <span className="ff-muted flex items-center gap-1.5"><RefreshCw size={12} className="ff-spin" /> Searching for injury &amp; news updates on your available players and roster…</span>
           ) : updatesError ? (
             <span style={{ color: '#E8544A' }}>{updatesError}</span>
           ) : (
             <span className="ff-muted">
               News last checked {new Date(lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              {Object.keys(liveUpdates).length > 0 ? ` \u00b7 ${Object.keys(liveUpdates).length} flagged player${Object.keys(liveUpdates).length === 1 ? '' : 's'}` : ' \u00b7 nothing new found'}
+              {Object.keys(liveUpdates).length > 0 ? ` · ${Object.keys(liveUpdates).length} flagged player${Object.keys(liveUpdates).length === 1 ? '' : 's'}` : ' · nothing new found'}
             </span>
           )}
         </div>
@@ -836,9 +1182,41 @@ export default function FantasyDraftAssistant() {
       {showSettings && (
         <div className="ff-panel rounded-xl p-4 mb-3">
           <SettingsForm draft={draft} setDraft={setDraft} onSubmit={() => setShowSettings(false)} submitLabel="Save Settings" />
-          <div className="mt-4 pt-4 text-xs ff-muted" style={{ borderTop: '1px solid #2A2E3D' }}>
-            The <RefreshCw size={11} className="inline -mt-0.5" /> refresh icon up top searches the web for fresh injury/trade/news on your available players and roster, tags severity (season-ending, significant, minor, off-field, or good news), and folds it into recommendations. It's a live web search each time you tap it, so use it a few times over the next day or two rather than repeatedly &mdash; not automatic, and it never touches K/DEF.
+
+          {/* diversify toggle */}
+          <div className="mt-4 pt-4" style={{ borderTop: '1px solid #2A2E3D' }}>
+            <label className="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <div className="text-sm font-semibold">Diversify across my other leagues</div>
+                <div className="ff-muted text-xs mt-0.5">
+                  Softly deprioritizes players already on your roster in other leagues (−{Math.abs(CROSS_LEAGUE_EXPOSURE_PENALTY)} pts)
+                </div>
+              </div>
+              <label className="ff-toggle shrink-0">
+                <input
+                  type="checkbox"
+                  checked={diversifyEnabled}
+                  onChange={(e) => setDiversifyEnabled(e.target.checked)}
+                />
+                <span className="ff-toggle-slider" />
+              </label>
+            </label>
           </div>
+
+          <div className="mt-4 pt-4 text-xs ff-muted" style={{ borderTop: '1px solid #2A2E3D' }}>
+            The <RefreshCw size={11} className="inline -mt-0.5" /> refresh icon up top searches the web for fresh injury/trade/news on your available players and roster, tags severity (season-ending, significant, minor, off-field, or good news), and folds it into recommendations. It's a live web search each time you tap it, so use it a few times over the next day or two rather than repeatedly — not automatic, and it never touches K/DEF.
+          </div>
+
+          {/* switch league */}
+          <div className="mt-4 pt-4" style={{ borderTop: '1px solid #2A2E3D' }}>
+            <button
+              onClick={() => { setSetupDone(false); setShowSettings(false); }}
+              className="ff-muted text-xs font-semibold flex items-center gap-1.5 hover:text-white ff-transition"
+            >
+              <Plus size={13} /> Switch to a different league
+            </button>
+          </div>
+
           <div className="mt-4 pt-4" style={{ borderTop: '1px solid #2A2E3D' }}>
             {!confirmReset ? (
               <button onClick={() => setConfirmReset(true)} className="ff-red text-xs font-semibold flex items-center gap-1.5">
@@ -870,7 +1248,7 @@ export default function FantasyDraftAssistant() {
             <div className="flex items-center gap-2">
               {isMyTurn ? <Flame size={18} /> : <Clock size={16} className="ff-muted" />}
               <span className="ff-display font-bold text-sm">
-                {isMyTurn ? "You're On The Clock" : `Round ${currentRound} \u00b7 ${ordinal(currentSlot)} slot picking`}
+                {isMyTurn ? "You're On The Clock" : `Round ${currentRound} · ${ordinal(currentSlot)} slot picking`}
               </span>
             </div>
             <span className={`ff-mono text-xs font-semibold ${isMyTurn ? '' : 'ff-muted'}`}>
@@ -881,7 +1259,7 @@ export default function FantasyDraftAssistant() {
             <div className={`text-xs mt-1.5 ${isMyTurn ? '' : 'ff-muted'}`}>
               Your next pick: <span className="ff-mono font-semibold">#{nextMyPick}</span>
               {' '}({picksUntilMine} pick{picksUntilMine === 1 ? '' : 's'} away)
-              {followingMyPick ? <> \u00b7 then #{followingMyPick}</> : null}
+              {followingMyPick ? <> · then #{followingMyPick}</> : null}
             </div>
           )}
         </div>
@@ -935,7 +1313,7 @@ export default function FantasyDraftAssistant() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search players or teams\u2026"
+                placeholder="Search players or teams…"
                 className="ff-input rounded-lg pl-8 pr-3 py-2 text-sm w-full"
               />
             </div>
@@ -1055,7 +1433,7 @@ export default function FantasyDraftAssistant() {
 
           <div className="ff-panel rounded-lg p-3 flex items-center gap-2 text-xs ff-muted">
             <Users size={14} /> {myRoster.length} of {totalRounds} picks used
-            {picksUntilMine > 0 && !draftComplete ? <> \u00b7 next pick in {picksUntilMine}</> : null}
+            {picksUntilMine > 0 && !draftComplete ? <> · next pick in {picksUntilMine}</> : null}
           </div>
         </div>
       )}
